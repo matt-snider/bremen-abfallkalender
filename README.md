@@ -11,6 +11,9 @@ NOTE: this is still a work in progress and doesn't really work yet. At the momen
 ```sh
 $ bremer-abfallkalender Meine-Strasse 42
 
-# outputs entries
+2018-07-04 - Restmüll / Bioabfall
+2018-07-11 - Papier / Gelber Sack
+2018-07-18 - Restmüll / Bioabfall
+// ...
 ```
 

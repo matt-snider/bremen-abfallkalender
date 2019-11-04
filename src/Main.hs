@@ -17,7 +17,7 @@ main = do
     -- from each entry in the list and then extract pickupdates
     -- e.g. map (\x -> extractPickupDates (extractYear x) x)
     let pickupDates = extractPickupDates 2018 $ head tagsByYear
-    putStrLn $ show pickupDates
+    mapM_ (putStrLn . show) pickupDates
 
 
 -----------
@@ -25,13 +25,17 @@ main = do
 -----------
 
 -- A date on which garbage or recycling will be picked up
-data PickupDate = PickupDate Day Type deriving Show
+data PickupDate = PickupDate Day Type
 
 -- The type of pickup (e.g. Bio / Müll, Recyling)
 type Type = String
 
 --  A year is just an int
 type Year = Integer
+
+-- Implement show to pretty print
+instance Show PickupDate where
+  show (PickupDate day pickupType) = show day ++ " - " ++ pickupType
 
 
 -------------
