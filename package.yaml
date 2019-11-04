@@ -13,6 +13,9 @@ extra-source-files:
 
 dependencies:
   - base >= 4.7 && < 5
+  - HTTP >= 4000 && < 5000
+  - tagsoup >= 0.14 && < 0.15
+  - time >= 1.8 && < 1.9
 
 executables:
   bremer-abfallkalender:
