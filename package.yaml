@@ -1,0 +1,20 @@
+name:                bremer-abfallkalender
+version:             0.1.0.0
+#synopsis:
+#description:
+homepage:            https://github.com/matt-snider/bremer-abfallkalender
+license:             MIT
+author:              Matt Snider
+maintainer:          matt.snider@protonmail.com
+copyright:           2019 Matt Snider
+category:            Web
+extra-source-files:
+- README.md
+
+dependencies:
+  - base >= 4.7 && < 5
+
+executables:
+  bremer-abfallkalender:
+    source-dirs:      src
+    main:             Main.hs
