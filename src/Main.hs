@@ -4,25 +4,113 @@ import           Data.Char
 import           Data.List
 import           Data.Maybe
 import           Data.Time
+import           Data.Time.Clock
 import           Network.HTTP
 import           System.Environment
+import           System.Exit
 import           Text.HTML.TagSoup
 import           Text.HTML.TagSoup.Match
 import           Text.Read
 
 
+-- Supports the following methods:
+--   list: show all pickup dates
+--   next: get the next pickup date (optionally with a type)
+--   next cat: get the next pickup date in pickup category
+--   version: show version
 main :: IO ()
 main = do
-    (street : streetNum : xs) <- getArgs
-    page                      <- getCalendar street streetNum
-    let tags        = parseTags page
-    let pickupDates = parsePage tags
-    mapM_ (putStrLn . show) pickupDates
+    progName <- getProgName
+    args     <- getArgs
+    today    <- getCurrentTime >>= return . utctDay
+    case args of
+        ("list" : streetName : streetNum : []) -> tryWithStreetNum
+            progName
+            streetNum
+            (bremerAbfallkalender List streetName)
+
+        ("next" : streetName : streetNum : []) -> tryWithStreetNum
+            progName
+            streetNum
+            (bremerAbfallkalender (Next today) streetName)
+
+        ("next" : catStr : streetName : streetNum : []) ->
+            case readMaybe $ normalizeCategory catStr :: Maybe Category of
+                Just cat -> tryWithStreetNum
+                    progName
+                    streetNum
+                    (bremerAbfallkalender (NextOf today cat) streetName)
+                Nothing -> die $ usageError
+                    ("invalid category for next '" ++ catStr ++ "'")
+                    progName
+
+        (arg : xs) | (arg == "-h" || arg == "--help" || arg == "help") -> do
+            putStrLn $ usage progName
+            exitSuccess
+
+        (arg : xs) | (arg == "-v" || arg == "--version" || arg == "version") ->
+            do
+                putStrLn $ version progName
+                exitSuccess
+
+        _ -> die $ usage progName
+  where
+    usage progName =
+        "Usage: "
+            ++ progName
+            ++ " OPERATION STREET_NAME STREET_NUMBER\n"
+            ++ "\tOPERATION        list, next, next PICKUP_CATEGORY\n"
+            ++ "\tPICKUP_CATEGORY  rest[müll], bio[abfall], pap[ier], gelber[sack], tannen[baumabfuhr]\n"
+
+    usageError msg progName = "Error: " ++ msg ++ "\n" ++ usage progName
+
+    version progName = progName ++ " v0.1"
+
+    -- Runs the method with the streetnum if it is one, otherwise
+    -- returns error about invalid street num
+    tryWithStreetNum :: String -> String -> (Int -> IO ()) -> IO ()
+    tryWithStreetNum progName s fn = case readMaybe s :: Maybe Int of
+        Just streetNum -> fn streetNum
+        Nothing ->
+            die $ usageError ("invalid street number '" ++ s ++ "'") progName
+
+
+bremerAbfallkalender :: Operation -> String -> Int -> IO ()
+bremerAbfallkalender op streetName streetNum = do
+    page <- getCalendar streetName streetNum
+    let tags           = parseTags page
+    let allPickupDates = parsePage tags
+    let pickupDates    = performOperation op allPickupDates
+    if length pickupDates > 0
+        then mapM_ (putStrLn . show) pickupDates
+        else putStrLn "No pickup dates found"
+
+
+performOperation :: Operation -> [PickupDate] -> [PickupDate]
+performOperation (Next day) dates
+    = take 1
+    . filter (`isAfter` day)
+    $ dates
+performOperation (NextOf day cat) dates
+    = performOperation (Next day)
+    $ filter (`hasCategory` cat) dates
+performOperation List dates = dates
 
 
 -----------
 -- Model --
 -----------
+
+-- There are three operations
+--   - List         show all pickup dates
+--   - Next         get the next pickup date after a certain date
+--   - NextOf cat   get the next pickup date in given category
+data Operation
+    = List
+    | Next Day
+    | NextOf Day Category
+    deriving (Show)
+
 
 -- A date on which garbage or recycling will be picked up
 data PickupDate = PickupDate Day [Category]
@@ -36,7 +124,7 @@ data Category
     | GelberSack
     | Tannenbaumabfuhr
     | Other String
-    deriving (Ord, Read)
+    deriving (Eq, Ord, Read)
 
 
 --  A year is just an int
@@ -49,7 +137,6 @@ instance Show PickupDate where
         in show day ++ " - " ++ catStr
 
 
-
 instance Show Category where
   show Restmuell        = "Restmüll"
   show Papier           = "Papier"
@@ -58,6 +145,13 @@ instance Show Category where
   show Tannenbaumabfuhr = "Tannenbaumabfuhr"
   show (Other str)      = '*' : str
 
+
+isAfter :: PickupDate -> Day -> Bool
+isAfter (PickupDate a _) b = a >= b
+
+
+hasCategory :: PickupDate -> Category -> Bool
+hasCategory (PickupDate _ cats) cat = cat `elem` cats
 
 -------------
 -- Parsing --
@@ -134,12 +228,19 @@ parseDayMonth s =
 -- derived Read instance of Cateogry we need to normalize them
 -- e.g. Restm. -> Restmuell, Restmüll -> Restmuell, Bioabf. -> Bioabfall, etc
 normalizeCategory :: String -> String
-normalizeCategory = translate . trim
+normalizeCategory = translate . capitalized . trim
   where
     translate "Restmüll"    = "Restmuell"
     translate "Restm."      = "Restmuell"
+    translate "Rest"        = "Restmuell"
     translate "Bioabf."     = "Bioabfall"
-    translate "Gelber Sack" = "GelberSack"
+    translate "Bio"         = "Bioabfall"
+    translate "Gelbersack"  = "GelberSack"
+    translate "Gelber sack" = "GelberSack"
+    translate "Gelber"      = "GelberSack"
+    translate "Sack"        = "GelberSack"
+    translate "Tannen"      = "Tannenbaumabfuhr"
+    translate "Pap"         = "Papier"
     translate x             = x
 
 
@@ -170,10 +271,11 @@ isMonth _           = False
 ----------
 
 -- Given a street and street number, make a request
-getCalendar :: String -> String -> IO String
-getCalendar street streetNum =
-    let params = urlEncodeVars [("strasse", street), ("hausnummer", streetNum)]
-        url    = "http://213.168.213.236/bremereb/bify/bify.jsp?" ++ params
+getCalendar :: String -> Int -> IO String
+getCalendar streetName streetNum =
+    let params = urlEncodeVars
+            [("strasse", streetName), ("hausnummer", show streetNum)]
+        url = "http://213.168.213.236/bremereb/bify/bify.jsp?" ++ params
     in  getResponseBody =<< simpleHTTP (getRequest url)
 
 
@@ -194,3 +296,11 @@ split [] delim = [""]
 split (c : cs) delim | c == delim = "" : rest
                      | otherwise  = (c : head rest) : tail rest
     where rest = split cs delim
+
+
+-- Capitalizes a string
+-- via https://stackoverflow.com/a/20093585
+capitalized :: String -> String
+capitalized (head : tail) = toUpper head : map toLower tail
+capitalized []            = []
+
